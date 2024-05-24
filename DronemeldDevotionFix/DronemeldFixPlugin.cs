@@ -54,7 +54,7 @@ namespace DronemeldDevotionFix
                             origin = self.gameObject.transform.position
                         }, true);
                     }
-                    Destroy(self);
+                    Destroy(self.gameObject);
                 });
                 
             }
