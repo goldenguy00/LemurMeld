@@ -18,7 +18,7 @@ namespace DronemeldDevotionFix
     {
         public const string PluginGUID = "com.score.DronemeldDevotionFix";
         public const string PluginName = "DronemeldDevotionFix";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.0.2";
 
         public void Awake()
         {
@@ -36,23 +36,27 @@ namespace DronemeldDevotionFix
                 i => i.MatchCall<UE.Object>("Destroy")))
             {
                 c.RemoveRange(2);
+                c.Emit(OpCodes.Ldloc_1);
                 c.Emit(OpCodes.Ldarga_S, (byte)1);
                 c.Emit<PickupIndex>(OpCodes.Call, "get_itemIndex");
-                c.EmitDelegate((LemurianEggController self, int item) =>
+                c.EmitDelegate((LemurianEggController self, CharacterMaster cm, int item) =>
                 {
-                    var lemInventory = DevotionInventoryController.GetOrCreateDevotionInventoryController(self.interactor);
-                    if (lemInventory)
+                    if (!cm)
                     {
-                        lemInventory.GiveItem(DronemeldPlugin.stackItem.itemIndex, 1);
-#pragma warning disable CS0618 // Type or member is obsolete
-                        lemInventory.GiveItem((ItemIndex)item, 1);
-#pragma warning restore CS0618 // Type or member is obsolete
-                        lemInventory.UpdateAllMinions(false);
-                        Util.PlaySound(self.sfxLocator.openSound, self.gameObject);
-                        EffectManager.SpawnEffect(LegacyResourcesAPI.Load<GameObject>("Prefabs/Effects/LemurianEggHatching"), new EffectData
+                        var lemInventory = DevotionInventoryController.GetOrCreateDevotionInventoryController(self.interactor);
+                        if (lemInventory)
                         {
-                            origin = self.gameObject.transform.position
-                        }, true);
+                            lemInventory.GiveItem(DronemeldPlugin.stackItem.itemIndex, 1);
+#pragma warning disable CS0618 // Type or member is obsolete
+                            lemInventory.GiveItem((ItemIndex)item, 1);
+#pragma warning restore CS0618 // Type or member is obsolete
+                            lemInventory.UpdateAllMinions(false);
+                            Util.PlaySound(self.sfxLocator.openSound, self.gameObject);
+                            EffectManager.SpawnEffect(LegacyResourcesAPI.Load<GameObject>("Prefabs/Effects/LemurianEggHatching"), new EffectData
+                            {
+                                origin = self.gameObject.transform.position
+                            }, true);
+                        }
                     }
                     Destroy(self.gameObject);
                 });
