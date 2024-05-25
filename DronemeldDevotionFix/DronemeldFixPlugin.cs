@@ -24,7 +24,7 @@ namespace DronemeldDevotionFix
     {
         public const string PluginGUID = "com.score.DronemeldDevotionFix";
         public const string PluginName = "DronemeldDevotionFix";
-        public const string PluginVersion = "1.0.3";
+        public const string PluginVersion = "1.0.4";
 
         internal static LOG.ManualLogSource _logger;
 
@@ -80,9 +80,11 @@ namespace DronemeldDevotionFix
             var c = new ILCursor(il);
 
             if (c.TryGotoNext(MoveType.AfterLabel,
+                i => i.MatchLdarg(0),
                 i => i.MatchCall<UE.Component>("get_gameObject"),
                 i => i.MatchCall<UE.Object>("Destroy")))
             {
+                c.Emit(OpCodes.Ldarg_0);
                 c.Emit(OpCodes.Ldloc_1);
                 c.Emit(OpCodes.Ldloc_2);
                 c.Emit(OpCodes.Ldarga_S, (byte)1);

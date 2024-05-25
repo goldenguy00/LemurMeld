@@ -1,3 +1,7 @@
+# 1.0.4
+
+fixed lemur inventory not updating on summon
+
 # 1.0.3
 
 supports modded elites
