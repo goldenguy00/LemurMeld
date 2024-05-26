@@ -7,7 +7,10 @@ using MonoMod.Cil;
 using RoR2;
 using RoR2.CharacterAI;
 using UnityEngine;
+using UnityEngine.Networking;
 using JetBrains.Annotations;
+using MonoMod.RuntimeDetour.HookGen;
+using BepInEx.Bootstrap;
 
 using DM = ThinkInvisible.Dronemeld;
 using T2 = TILER2;
@@ -32,6 +35,17 @@ namespace DronemeldDevotionFix
         public static List<EquipmentIndex> highLvl = [];
         public static List<EquipmentIndex> gigaChadLvl = [];
 
+        public static PickupIndex scrapWhite = PickupIndex.none;
+        public static PickupIndex scrapGreen = PickupIndex.none;
+        public static PickupIndex scrapRed = PickupIndex.none;
+        public static PickupIndex scrapYellow = PickupIndex.none;
+
+        public delegate CharacterMaster orig_TryApply(IEnumerable<CharacterMaster> cm);
+        public delegate CharacterMaster hook_TryApply(orig_TryApply orig, IEnumerable<CharacterMaster> cm);
+
+        private static Dictionary<CharacterMaster, List<ItemIndex>> fuckingStupid = [];
+        private static CharacterMaster fuckthis = null;
+
         public void Awake()
         {
             _logger = Logger;
@@ -39,6 +53,9 @@ namespace DronemeldDevotionFix
             //       //
             // hooks //
             //       //
+
+            // inventory display
+            On.RoR2.UI.ScoreboardController.Rebuild += AddLemurianInventory;
 
             // artifact enable
             RunArtifactManager.onArtifactEnabledGlobal += RunArtifactManager_onArtifactEnabledGlobal;
@@ -49,15 +66,55 @@ namespace DronemeldDevotionFix
             // evolve
             IL.RoR2.DevotionInventoryController.EvolveDevotedLumerian += DevotionInventoryController_EvolveDevotedLumerian;
             IL.RoR2.DevotionInventoryController.GenerateEliteBuff += DevotionInventoryController_GenerateEliteBuff;
+            On.RoR2.DevotionInventoryController.UpdateMinionInventory += DevotionInventoryController_UpdateMinionInventory;
 
             //die
             On.RoR2.DevotionInventoryController.DropScrapOnDeath += DevotionInventoryController_DropScrapOnDeath;
+
+            //this fix is so fucking stupid, it makes me genuinely upset that it works
+            HookEndpointManager.Add<hook_TryApply>(typeof(DM.DronemeldPlugin).GetMethod("TryApply", [typeof(IEnumerable<CharacterMaster>)]), TryApply);
         }
 
-        #region Artifact Enabled
+        #region worst hook ever
+        private static CharacterMaster TryApply(orig_TryApply orig, IEnumerable<CharacterMaster> cm)
+        {
+            var targetMaster = orig(cm);
+            if (targetMaster != null)
+            {
+                fuckthis = targetMaster;
+                if (!fuckingStupid.ContainsKey(targetMaster))
+                {
+                    fuckingStupid.Add(targetMaster, []);
+                }
+            }
+            return targetMaster;
+        }
+        #endregion
+
+        #region Artifact Setup
+        [SystemInitializer([typeof(ItemCatalog)])]
+        private static void HideLemItems()
+        {
+            ItemDef[] itemDefs = ItemCatalog.itemDefs;
+            foreach (ItemDef itemDef in itemDefs)
+            {
+                if (itemDef.nameToken == "ITEM_BOOSTDAMAGE_NAME" || itemDef.nameToken == "ITEM_BOOSTHP_NAME")
+                {
+                    itemDef.hidden = true;
+                }
+            }
+        }
+
         private static void RunArtifactManager_onArtifactEnabledGlobal([NotNull] RunArtifactManager runArtifactManager, [NotNull] ArtifactDef artifactDef)
         {
             if (artifactDef != CU8Content.Artifacts.Devotion) return;
+
+            if (Chainloader.PluginInfos.TryGetValue("com.Nuxlar.DevotionInventoryDisplay", out var nux) && nux != null && nux.Instance != null)
+            {
+                // sorry nux
+                _logger.LogWarning("Bye nux");
+                MonoBehaviour.Destroy(nux.Instance);
+            }
 
             // linq is just fun tbh
             var highLvl = CombatDirector.eliteTiers
@@ -71,6 +128,51 @@ namespace DronemeldDevotionFix
             DronemeldFixPlugin.lowLvl = lowLvl.Select(e => e.eliteEquipmentDef.equipmentIndex).Distinct().ToList();
             DronemeldFixPlugin.highLvl = highLvl.Select(e => e.eliteEquipmentDef.equipmentIndex).Distinct().ToList();
             DronemeldFixPlugin.gigaChadLvl = DronemeldFixPlugin.highLvl.Except(DronemeldFixPlugin.lowLvl).ToList();
+
+
+            if (!PickupCatalog.nameToPickupIndex.TryGetValue("ItemIndex.ScrapWhite", out var scrapWhite)) scrapWhite = PickupIndex.none;
+            if (!PickupCatalog.nameToPickupIndex.TryGetValue("ItemIndex.ScrapGreen", out var scrapGreen)) scrapGreen = PickupIndex.none;
+            if (!PickupCatalog.nameToPickupIndex.TryGetValue("ItemIndex.ScrapRed", out var scrapRed)) scrapRed = PickupIndex.none;
+            if (!PickupCatalog.nameToPickupIndex.TryGetValue("ItemIndex.ScrapYellow", out var scrapYellow)) scrapYellow = PickupIndex.none;
+        }
+
+        private static void AddLemurianInventory(On.RoR2.UI.ScoreboardController.orig_Rebuild orig, RoR2.UI.ScoreboardController self)
+        {
+            orig(self);
+            if (!RunArtifactManager.instance || !RunArtifactManager.instance.IsArtifactEnabled(CU8Content.Artifacts.Devotion))
+            {
+                return;
+            }
+
+            List<CharacterMaster> masters = [];
+            foreach (var instance in PlayerCharacterMasterController.instances)
+            {
+                masters.Add(instance.master);
+            }
+
+            var master = LocalUserManager.readOnlyLocalUsersList.First().cachedMasterController.master;
+            if (master)
+            {
+                var minionGroup = MinionOwnership.MinionGroup.FindGroup(master.netId);
+                if (minionGroup != null)
+                {
+                    foreach (MinionOwnership minionOwnership in minionGroup.members)
+                    {
+                        if (minionOwnership)
+                        {
+                            var lem = minionOwnership.GetComponent<CharacterMaster>();
+                            if (lem != null && lem.gameObject.name.StartsWith("DevotedLemurian"))
+                                masters.Add(lem);
+                        }
+                    }
+                }
+            }
+
+            self.SetStripCount(masters.Count);
+            for (int i = 0; i < masters.Count; i++)
+            {
+                self.stripAllocator.elements[i].SetMaster(masters[i]);
+            }
         }
         #endregion
 
@@ -96,8 +198,12 @@ namespace DronemeldDevotionFix
                         var lemInventory = DevotionInventoryController.GetOrCreateDevotionInventoryController(self.interactor);
                         if (lemInventory)
                         {
-                            lemInventory.GiveItem(DM.DronemeldPlugin.stackItem.itemIndex, 1);
-                            lemInventory.GiveItem((ItemIndex)item, 1);
+                            if (fuckthis != null)
+                            {
+                                fuckingStupid[fuckthis].Add((ItemIndex)item);
+                                fuckthis = null;
+                            }
+
                             lemInventory.UpdateAllMinions(false);
                             Util.PlaySound(self.sfxLocator.openSound, self.gameObject);
                             EffectManager.SpawnEffect(LegacyResourcesAPI.Load<GameObject>("Prefabs/Effects/LemurianEggHatching"), ed, true);
@@ -167,6 +273,31 @@ namespace DronemeldDevotionFix
                 _logger.LogError("Sorry guy, ILHook failed for DevotionInventoryController::GenerateEliteBuff");
             }
         }
+
+        private void DevotionInventoryController_UpdateMinionInventory(On.RoR2.DevotionInventoryController.orig_UpdateMinionInventory orig,
+            DevotionInventoryController self, DevotedLemurianController lemCtrl, bool shouldEvolve)
+        {
+            if (!NetworkServer.active)
+            {
+                orig(self, lemCtrl, shouldEvolve);
+                return;
+            }
+
+            var stackCount = lemCtrl.LemurianInventory.GetItemCount(DM.DronemeldPlugin.stackItem);
+
+            orig(self, lemCtrl, shouldEvolve);
+
+            if (stackCount > 0)
+                lemCtrl.LemurianInventory.GiveItem(DM.DronemeldPlugin.stackItem, stackCount);
+
+            if (fuckingStupid.TryGetValue(lemCtrl._lemurianMaster, out var dumbList))
+            {
+                foreach(var dumbItem in dumbList)
+                {
+                    lemCtrl.LemurianInventory.GiveItem(dumbItem);
+                }
+            }
+        }
         #endregion
 
         #region On Death
@@ -175,49 +306,39 @@ namespace DronemeldDevotionFix
         {
             orig(self, devotionItem, minionBody);
 
-            if (!self || !self._devotionMinionInventory || !minionBody) return;
-
-            var stackCount = self._devotionMinionInventory.GetItemCount(DM.DronemeldPlugin.stackItem);
-            if (stackCount > 0)
+            if (NetworkServer.active && fuckingStupid.TryGetValue(minionBody.master, out var stupidList))
             {
-                self.RemoveItem(DM.DronemeldPlugin.stackItem.itemIndex, stackCount);
-            }
-
-            if (!PickupCatalog.nameToPickupIndex.TryGetValue("ItemIndex.ScrapWhite", out var scrapWhite)) scrapWhite = PickupIndex.none;
-            if (!PickupCatalog.nameToPickupIndex.TryGetValue("ItemIndex.ScrapGreen", out var scrapGreen)) scrapGreen = PickupIndex.none;
-            if (!PickupCatalog.nameToPickupIndex.TryGetValue("ItemIndex.ScrapRed", out var scrapRed)) scrapRed = PickupIndex.none;
-            if (!PickupCatalog.nameToPickupIndex.TryGetValue("ItemIndex.ScrapYellow", out var scrapYellow)) scrapYellow = PickupIndex.none;
-
-            foreach (var item in self._devotionMinionInventory.itemAcquisitionOrder)
-            {
-                if (item == devotionItem) continue;
-
-                ItemDef itemDef = ItemCatalog.GetItemDef(item);
-                if (itemDef != null && !itemDef.hidden)
+                foreach(var shit in stupidList)
                 {
-                    PickupIndex pickupIndex;
-                    switch (itemDef.tier)
+                    ItemDef itemDef = ItemCatalog.GetItemDef(shit);
+                    if (itemDef != null)
                     {
-                        case ItemTier.Tier1:
-                            pickupIndex = scrapWhite;
-                            break;
-                        case ItemTier.Tier2:
-                            pickupIndex = scrapGreen;
-                            break;
-                        case ItemTier.Tier3:
-                            pickupIndex = scrapRed;
-                            break;
-                        case ItemTier.Boss:
-                            pickupIndex = scrapYellow;
-                            break;
-                        default:
-                            continue;
-                    }
-                    if (pickupIndex != PickupIndex.none)
-                    {
-                        PickupDropletController.CreatePickupDroplet(pickupIndex, minionBody.corePosition, UE.Random.insideUnitCircle * 15f);
+                        PickupIndex pickupIndex;
+                        switch (itemDef.tier)
+                        {
+                            case ItemTier.Tier1:
+                                pickupIndex = scrapWhite;
+                                break;
+                            case ItemTier.Tier2:
+                                pickupIndex = scrapGreen;
+                                break;
+                            case ItemTier.Tier3:
+                                pickupIndex = scrapRed;
+                                break;
+                            case ItemTier.Boss:
+                                pickupIndex = scrapYellow;
+                                break;
+                            default:
+                                continue;
+                        }
+                        if (pickupIndex != PickupIndex.none)
+                        {
+                            PickupDropletController.CreatePickupDroplet(pickupIndex, minionBody.corePosition, UE.Random.insideUnitCircle * 15f);
+                        }
                     }
                 }
+                stupidList.Clear();
+                fuckingStupid.Remove(minionBody.master);
             }
         }
         #endregion
