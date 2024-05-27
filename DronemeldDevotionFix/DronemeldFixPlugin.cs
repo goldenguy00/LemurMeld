@@ -19,8 +19,8 @@ using UE = UnityEngine;
 using LOG = BepInEx.Logging;
 
 using RiskyMod.Allies;
-using R2API;
 using HarmonyLib;
+using R2API;
 
 namespace DronemeldDevotionFix
 {
@@ -37,8 +37,6 @@ namespace DronemeldDevotionFix
 
         internal static LOG.ManualLogSource _logger;
 
-        public static bool Enabled => PluginConfig.enabled.Value;
-
         public static bool rooInstalled => Chainloader.PluginInfos.ContainsKey("com.rune580.riskofoptions");
         public static bool riskyInstalled => Chainloader.PluginInfos.ContainsKey("com.RiskyLives.RiskyMod");
 
@@ -52,31 +50,8 @@ namespace DronemeldDevotionFix
         public delegate bool orig_IsDronemeldEnabledFor(string masterPrefabName);
         public delegate bool hook_IsDronemeldEnabledFor(orig_IsDronemeldEnabledFor orig, string masterPrefabName);
 
-        public static Dictionary<DevotedLemurianController, List<ItemIndex>> lemItemDict = new Dictionary<DevotedLemurianController, List<ItemIndex>>();
+        public static Dictionary<DevotedLemurianController, SortedList<int, int>> lemItemDict = [];
         public static DevotedLemurianController meldRef;
-
-        private static bool showAllInv = false;
-        private static bool shareItems = true;
-
-        private static void Log(IEnumerable<string> message, LogType? type = null) { message.Do(msg => Log(msg, type)); }
-        private static void Log(string message, LogType? type = null)
-        {
-            if (PluginConfig.enableDebugging.Value)
-            {
-                switch(type ?? LogType.Log)
-                {
-                    default:
-                    case LogType.Log:
-                        _logger.LogMessage(message); break;
-                    case LogType.Warning:
-                        _logger.LogWarning(message); break;
-                    case LogType.Error:
-                        _logger.LogError(message); break;
-                    case LogType.Exception:
-                        _logger.LogFatal(message); break;
-                }
-            }
-        }
 
         public void Awake()
         {
@@ -84,7 +59,7 @@ namespace DronemeldDevotionFix
             PluginConfig.myConfig = Config;
             PluginConfig.ReadConfig();
 
-            if (!Enabled) return;
+            if (!PluginConfig.enabled.Value) return;
 
             //       //
             // hooks //
@@ -102,8 +77,8 @@ namespace DronemeldDevotionFix
             IL.RoR2.CharacterAI.LemurianEggController.SummonLemurian += LemurianEggController_SummonLemurian;
 
             // evolve
-            IL.RoR2.DevotionInventoryController.EvolveDevotedLumerian += DevotionInventoryController_EvolveDevotedLumerian;
             IL.RoR2.DevotionInventoryController.GenerateEliteBuff += DevotionInventoryController_GenerateEliteBuff;
+            IL.RoR2.DevotionInventoryController.EvolveDevotedLumerian += DevotionInventoryController_EvolveDevotedLumerian;
             On.RoR2.DevotionInventoryController.UpdateMinionInventory += DevotionInventoryController_UpdateMinionInventory;
 
             // die
@@ -133,7 +108,7 @@ namespace DronemeldDevotionFix
             {
                 meldRef = lem;
                 if (!lemItemDict.ContainsKey(meldRef))
-                    lemItemDict.Add(meldRef, new List<ItemIndex>());
+                    lemItemDict.Add(meldRef, []);
             }
             return targetMaster;
         }
@@ -160,31 +135,70 @@ namespace DronemeldDevotionFix
             if (Chainloader.PluginInfos.TryGetValue("com.Nuxlar.DevotionInventoryDisplay", out var nux) && nux != null && nux.Instance != null)
             {
                 // sorry nux
-                Log("Bye nux");
                 MonoBehaviour.Destroy(nux.Instance);
             }
-            
-            // config
-            showAllInv = PluginConfig.showAllMinions.Value;
-            shareItems = PluginConfig.shareItems.Value;
 
-            var eliteTiers = EliteAPI.GetCombatDirectorEliteTiers().ToList();
+            DronemeldFixPlugin.lowLvl = [];
+            DronemeldFixPlugin.highLvl = [];
+            DronemeldFixPlugin.gigaChadLvl = [];
 
-            // linq is just fun tbh
-            var highLvl = eliteTiers
-                .SelectMany(t => t.eliteTypes)
-                .Where(e => e.eliteEquipmentDef != null && !e.name.EndsWith("Honor"));
+            // thank you moffein for showing me the way, fuck this inconsistent bs
+            // holy shit this is horrible i hate it i hate it i hate it
+            foreach (var etd in EliteAPI.GetCombatDirectorEliteTiers().ToList())
+            {
+                if (etd != null && etd.eliteTypes.Length > 0)
+                {
+                    //Super scuffed. Checking for the Elite Type directly didn't work.
+                    if (etd.eliteTypes != null)
+                    {
+                        var isT2 = false;
+                        var isT1 = false;
+                        foreach (EliteDef ed in etd.eliteTypes)
+                        {
+                            if (ed != null && !ed.name.EndsWith("Honor"))
+                            {
+                                if (ed.eliteEquipmentDef == RoR2Content.Equipment.AffixPoison || ed.eliteEquipmentDef == RoR2Content.Equipment.AffixLunar)
+                                {
+                                    isT2 = true;
+                                    break;
+                                }
+                                else if (ed.eliteEquipmentDef == RoR2Content.Equipment.AffixBlue)
+                                {
+                                    isT1 = true;
+                                    break;
+                                }
+                            }
+                        }
 
-            var lowLvl = eliteTiers[1].eliteTypes
-                .Where(e => e.eliteEquipmentDef != null);
+                        if (isT1 || isT2)
+                        {
+                            foreach (var ed in etd.eliteTypes)
+                            {
+                                //Check if EliteDef has an associated buff and the character doesn't already have the buff.
+                                bool isBuffValid = ed && ed.eliteEquipmentDef
+                                    && ed.eliteEquipmentDef.equipmentIndex != EquipmentIndex.None
+                                    && ed.eliteEquipmentDef.passiveBuffDef
+                                    && ed.eliteEquipmentDef.passiveBuffDef.isElite;
 
-            DronemeldFixPlugin.lowLvl = lowLvl.Select(e => e.eliteEquipmentDef.equipmentIndex).Distinct().ToList();
-            DronemeldFixPlugin.highLvl = highLvl.Select(e => e.eliteEquipmentDef.equipmentIndex).Distinct().ToList();
-            DronemeldFixPlugin.gigaChadLvl = DronemeldFixPlugin.highLvl.Except(DronemeldFixPlugin.lowLvl).ToList();
+                                if (!isBuffValid) continue;
 
-            Log(lowLvl.Select(e => e.name));
-            Log(highLvl.Select(e => e.name));
-            Log(highLvl.Except(lowLvl).Select(e => e.name));
+                                if (isT1)
+                                {
+                                    if (PluginConfig.enableDebugging.Value) _logger.LogInfo("t1 " + ed.eliteIndex +" " + ed.eliteEquipmentDef.nameToken);
+                                    lowLvl.Add(ed.eliteEquipmentDef.equipmentIndex);
+                                    highLvl.Add(ed.eliteEquipmentDef.equipmentIndex);
+                                }
+                                else if (isT2)
+                                {
+                                    if (PluginConfig.enableDebugging.Value) _logger.LogInfo("t2 " + ed.eliteIndex + " " + ed.eliteEquipmentDef.nameToken);
+                                    highLvl.Add(ed.eliteEquipmentDef.equipmentIndex);
+                                    gigaChadLvl.Add(ed.eliteEquipmentDef.equipmentIndex);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         private static void AddLemurianInventory(On.RoR2.UI.ScoreboardController.orig_Rebuild orig, RoR2.UI.ScoreboardController self)
@@ -216,7 +230,7 @@ namespace DronemeldDevotionFix
                             {
                                 masters.Add(lem);
 
-                                if (!showAllInv)
+                                if (!PluginConfig.showAllMinions.Value)
                                     break;
                             }
                         }
@@ -254,16 +268,17 @@ namespace DronemeldDevotionFix
                         var lemInvCtrl = DevotionInventoryController.GetOrCreateDevotionInventoryController(self.interactor);
                         if (lemInvCtrl)
                         {
-                            var item = (ItemIndex)idx;
                             if (meldRef != null)
                             {
-                                lemItemDict[meldRef].Add(item);
+                                var sortedList = lemItemDict[meldRef];
+                                if (sortedList.ContainsKey(idx)) sortedList[idx]++;
+                                else sortedList.Add(idx, 1);
                             }
 
-                            if (shareItems)
-                                lemInvCtrl.GiveItem(item);
+                            if (PluginConfig.shareItems.Value)
+                                lemInvCtrl.GiveItem((ItemIndex)idx);
                             else
-                                meldRef?.LemurianInventory.GiveItem(item);
+                                meldRef?.LemurianInventory.GiveItem((ItemIndex)idx);
 
                             lemInvCtrl.UpdateAllMinions(false);
                             Util.PlaySound(self.sfxLocator.openSound, self.gameObject);
@@ -310,13 +325,9 @@ namespace DronemeldDevotionFix
                 {
                     if (PluginConfig.randomizeElites.Value)
                     {
-                        List<EquipmentIndex> list = PluginConfig.allowT1Elites.Value ? 
-                            DronemeldFixPlugin.highLvl : DronemeldFixPlugin.gigaChadLvl;
-                        Log("DevotionInventoryController_EvolveDevotedLumerian");
-                        Log(list.Select(e => ((int)e).ToString()));
+                        List<EquipmentIndex> list = DronemeldFixPlugin.gigaChadLvl;
 
                         int index = UE.Random.Range(0, list.Count);
-                        Log(index.ToString());
                         body.inventory.SetEquipmentIndex(list[index]);
                     }
                 });
@@ -336,22 +347,15 @@ namespace DronemeldDevotionFix
                 i => i.MatchBrtrue(out _),
                 i => i.MatchLdsfld<DevotionInventoryController>(nameof(DevotionInventoryController.highLevelEliteBuffs)),
                 i => i.MatchBr(out _),
-                i => i.MatchLdsfld<DevotionInventoryController>(nameof(DevotionInventoryController.lowLevelEliteBuffs)),
-                i => i.MatchStloc(0)
+                i => i.MatchLdsfld<DevotionInventoryController>(nameof(DevotionInventoryController.lowLevelEliteBuffs))
                 ))
             {
                 // fuck it just nuke it all
-                c.RemoveRange(5);
-                ILLabel label1 = c.DefineLabel();
-                ILLabel label2 = c.DefineLabel();
-
-                c.Emit(OpCodes.Brtrue_S, label1);
-                c.Emit<DronemeldFixPlugin>(OpCodes.Ldsfld, nameof(highLvl));
-                c.Emit(OpCodes.Br_S, label2);
-                c.MarkLabel(label1);
-                c.Emit<DronemeldFixPlugin>(OpCodes.Ldsfld, nameof(lowLvl));
-                c.MarkLabel(label2);
-                c.Emit(OpCodes.Stloc_0);
+                c.RemoveRange(4);
+                c.EmitDelegate<Func<bool, List<EquipmentIndex>>>((isLowLvl) =>
+                {
+                    return isLowLvl ? DronemeldFixPlugin.lowLvl : DronemeldFixPlugin.highLvl;
+                });
             }
             else
             {
@@ -369,14 +373,6 @@ namespace DronemeldDevotionFix
             }
             var stackCount = lemCtrl.LemurianInventory.GetItemCount(DM.DronemeldPlugin.stackItem);
 
-            //untracked items
-            IEnumerable<(ItemIndex, int)> itemStacks = null;
-            if (!shareItems && lemItemDict.TryGetValue(lemCtrl, out var list))
-            {
-                var stacks = lemCtrl.LemurianInventory.itemStacks;
-                itemStacks = list.Distinct().Select(idx => (idx, stacks[(int)idx]));
-            }
-
             orig(self, lemCtrl, shouldEvolve);
 
             if (stackCount > 0)
@@ -385,12 +381,14 @@ namespace DronemeldDevotionFix
             if (PluginConfig.disableFallDamage.Value)
                 lemCtrl.LemurianBody.bodyFlags |= CharacterBody.BodyFlags.IgnoreFallDamage;
 
+            lemCtrl._leashDistSq = PluginConfig.teleportDistance.Value * PluginConfig.teleportDistance.Value;
+
             //return untracked items
-            if (itemStacks != null)
+            if (!PluginConfig.shareItems.Value && lemItemDict.TryGetValue(lemCtrl, out var itemStacks))
             {
                 foreach (var item in itemStacks)
                 {
-                    lemCtrl.LemurianInventory.GiveItem(item.Item1, item.Item2);
+                    lemCtrl.LemurianInventory.GiveItem((ItemIndex)item.Key, item.Value);
                 }
             }
         }
@@ -407,9 +405,10 @@ namespace DronemeldDevotionFix
 
             if (lemItemDict.TryGetValue(self, out var lemList))
             {
+                if (PluginConfig.enableDebugging.Value) _logger.LogInfo("Found lem");
                 foreach(var item in lemList)
                 {
-                    ItemDef itemDef = ItemCatalog.GetItemDef(item);
+                    ItemDef itemDef = ItemCatalog.GetItemDef((ItemIndex)item.Key);
                     if (itemDef != null)
                     {
                         PickupIndex pickupIndex = PickupIndex.none;
@@ -430,15 +429,20 @@ namespace DronemeldDevotionFix
                         }
                         if (pickupIndex != PickupIndex.none)
                         {
+                            if (PluginConfig.enableDebugging.Value) _logger.LogInfo("Dropping item " + itemDef.nameToken);
                             PickupDropletController.CreatePickupDroplet(pickupIndex, self.LemurianBody.corePosition, UE.Random.insideUnitCircle * 15f);
 
-                            if (shareItems)
-                                self._devotionInventoryController.RemoveItem(item);
+                            if (PluginConfig.shareItems.Value)
+                                self._devotionInventoryController.RemoveItem((ItemIndex)item.Key, item.Value);
                         }
                     }
                 }
                 lemItemDict.Remove(self);
                 meldRef = null;
+            }
+            else
+            {
+                if (PluginConfig.enableDebugging.Value) _logger.LogError("Could not find target lem :(");
             }
 
             orig(self);

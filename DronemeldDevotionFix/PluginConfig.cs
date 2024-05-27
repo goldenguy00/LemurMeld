@@ -20,6 +20,7 @@ namespace DronemeldDevotionFix
         public static ConfigEntry<bool> showAllMinions;
         public static ConfigEntry<bool> shareItems;
         public static ConfigEntry<bool> enableDebugging;
+        public static ConfigEntry<int> teleportDistance;
 
         public const string GENERAL = "01 - General";
         public const string EXPERIMENTAL = "02 - Experimental";
@@ -29,9 +30,8 @@ namespace DronemeldDevotionFix
             InitROO();
             enabled = BindAndOptions(GENERAL, "Enabled", true, "Set to false to disable all DronemeldDevotionFix changes. Does not affect the base Dronemeld plugin.", true);
             randomizeElites = BindAndOptions(GENERAL, "Reroll Elite Elder Lemurians", true, "If true, fully evolved Elite Elder Lemurians will reroll to a new elite type after each boss is defeated.");
-            allowT1Elites = BindAndOptions(GENERAL, "Allow Any Randomized Elite Tier", false, "If true, fully evolved Elite Elder Lemurians will be able to reroll into any elite type." +
-                " If false, only the initial elite type can be tier 1.\r\n\r\nRequires \"Randomize Evolved Elites\" to be enabled.");
             disableFallDamage = BindAndOptions(GENERAL, "Disable Fall Damage", true, "If true, prevents Lemurians from taking fall damage.");
+            teleportDistance = BindAndOptions(GENERAL, "Teleport Distance", 150, "Sets the max distance a Lemurian can be from their owner before teleporting.");
 
             showAllMinions = BindAndOptions(EXPERIMENTAL, "Show All Minions on Scoreboard", false, "If true, the scoreboard will display all of the Lemurians and their inventories." +
                 " Intended to be used with \"Share Lemurian Items\" set to false.");
